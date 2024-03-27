@@ -16,8 +16,8 @@ type JsonRPC struct {
 	subscriberRegistry *subscriberRegistry
 	connMutex          sync.Mutex
 	conn               *websocket.Conn
-	onConnect          func() error
-	onDisconnect       func()
+	OnConnect          func() error
+	OnDisconnect       func()
 }
 
 func NewJsonRPC() *JsonRPC {
@@ -28,8 +28,8 @@ func NewJsonRPC() *JsonRPC {
 		subscriberRegistry: newSubscriberRegistry(),
 		connMutex:          sync.Mutex{},
 		conn:               nil,
-		onConnect:          func() error { return nil },
-		onDisconnect:       func() {},
+		OnConnect:          func() error { return nil },
+		OnDisconnect:       func() {},
 	}
 }
 
