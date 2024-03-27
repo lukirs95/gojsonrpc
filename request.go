@@ -9,42 +9,14 @@ import (
 	"github.com/lukirs95/websocket/wsjson"
 )
 
-type Request interface {
-	Marshal() ([]byte, error)
-	Method() Method
-}
-
-func (jsonRPC *JsonRPC) NewRequest(method Method, params json.RawMessage, responseChannel *Response) *RpcRequest {
-	jsonRPC.callStackMutex.Lock()
-	defer jsonRPC.callStackMutex.Unlock()
-	jsonRPC.callStack.push(jsonRPC.nextId(), responseChannel)
-	return &RpcRequest{
-		Version: VERSION,
-		Method:  method,
-		Params:  params,
-		Id:      jsonRPC.idCounter,
-	}
-}
-
-func (jsonRPC *JsonRPC) DeleteRequest(id Id) error {
-	jsonRPC.callStackMutex.Lock()
-	defer jsonRPC.callStackMutex.Unlock()
-	responseChannel, err := jsonRPC.callStack.pop(id)
-	if err != nil {
-		return err
-	}
-	*responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
-	return nil
-}
-
-func (rpc *JsonRPC) SendRequest(ctx context.Context, request Request) (json.RawMessage, error) {
-	params, err := request.Marshal()
+func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any) (json.RawMessage, error) {
+	params, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
 
 	responseChannel := make(Response, 1)
-	message := rpc.NewRequest(request.Method(), params, &responseChannel)
+	message := rpc.newRequest(method, params, &responseChannel)
 
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -57,14 +29,14 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, request Request) (json.RawM
 	rpc.connMutex.Unlock()
 
 	if err := wsjson.Write(ctx, rpc.conn, message); err != nil {
-		rpc.DeleteRequest(message.Id)
+		rpc.deleteRequest(message.Id)
 		close(responseChannel)
 		return nil, err
 	}
 
 	select {
 	case <-ctxWithTimeout.Done():
-		rpc.DeleteRequest(message.Id)
+		rpc.deleteRequest(message.Id)
 		close(responseChannel)
 		return nil, fmt.Errorf("timeout exeeded")
 	case response := <-responseChannel:
@@ -79,4 +51,27 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, request Request) (json.RawM
 		}
 	}
 	return nil, fmt.Errorf("request failed, select statement did not work")
+}
+
+func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel *Response) *RpcRequest {
+	jsonRPC.callStackMutex.Lock()
+	defer jsonRPC.callStackMutex.Unlock()
+	jsonRPC.callStack.push(jsonRPC.nextId(), responseChannel)
+	return &RpcRequest{
+		Version: VERSION,
+		Method:  method,
+		Params:  params,
+		Id:      jsonRPC.idCounter,
+	}
+}
+
+func (jsonRPC *JsonRPC) deleteRequest(id Id) error {
+	jsonRPC.callStackMutex.Lock()
+	defer jsonRPC.callStackMutex.Unlock()
+	responseChannel, err := jsonRPC.callStack.pop(id)
+	if err != nil {
+		return err
+	}
+	*responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
+	return nil
 }
