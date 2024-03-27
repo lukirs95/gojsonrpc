@@ -92,7 +92,6 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 
 	for {
 		if err := ctx.Err(); err != nil {
-			dialErr = err
 			break
 		}
 
