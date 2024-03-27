@@ -86,7 +86,7 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 
 	jsonRPC.conn = c
 
-	if err := jsonRPC.onConnect(); err != nil {
+	if err := jsonRPC.OnConnect(); err != nil {
 		return err
 	}
 
@@ -108,6 +108,6 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 		}
 	}
 
-	jsonRPC.onDisconnect()
+	jsonRPC.OnDisconnect()
 	return dialErr
 }
