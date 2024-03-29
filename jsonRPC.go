@@ -85,6 +85,9 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 	}
 
 	jsonRPC.conn = c
+	defer func() {
+		jsonRPC.conn = nil
+	}()
 
 	if err := jsonRPC.OnConnect(); err != nil {
 		return err
