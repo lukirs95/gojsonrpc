@@ -57,6 +57,7 @@ func (jsonRPC *JsonRPC) HandleMessage(message *UnknownMessage) error {
 				return nil
 			}
 		}
+		return nil
 	case M_TYPE_RESPONSE:
 		if !jsonRPC.callStack.empty() {
 			jsonRPC.callStackMutex.Lock()
