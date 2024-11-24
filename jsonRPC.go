@@ -95,21 +95,23 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 	}
 
 	for {
-		if err := ctx.Err(); err != nil {
-			break
-		}
-
-		rpcMessage := &UnknownMessage{}
-		if err := wsjson.Read(ctx, c, rpcMessage); err != nil {
-			dialErr = err
-			break
-		}
-
-		if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
-			dialErr = err
-			break
+		select {
+		case <-ctx.Done():
+			goto BREAK
+		default:
+			rpcMessage := &UnknownMessage{}
+			if err := wsjson.Read(ctx, c, rpcMessage); err != nil {
+				dialErr = err
+				goto BREAK
+			}
+	
+			if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
+				dialErr = err
+				goto BREAK
+			}			
 		}
 	}
+	BREAK:
 
 	jsonRPC.OnDisconnect()
 	return dialErr
