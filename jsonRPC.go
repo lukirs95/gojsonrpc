@@ -14,6 +14,7 @@ type JsonRPC struct {
 	callStackMutex     sync.Mutex
 	callStack          *callStack
 	subscriberRegistry *subscriberRegistry
+	readLimit          int64
 	connMutex          sync.Mutex
 	conn               *websocket.Conn
 	OnConnect          func() error
@@ -26,11 +27,16 @@ func NewJsonRPC() *JsonRPC {
 		callStackMutex:     sync.Mutex{},
 		callStack:          newCallStack(),
 		subscriberRegistry: newSubscriberRegistry(),
+		readLimit:          2048,
 		connMutex:          sync.Mutex{},
 		conn:               nil,
 		OnConnect:          func() error { return nil },
 		OnDisconnect:       func() {},
 	}
+}
+
+func (jsonRPC *JsonRPC) SetReadLimit(newLimit int64) {
+	jsonRPC.readLimit = newLimit
 }
 
 func (jsonRPC *JsonRPC) SubscribeMethod(ctx context.Context, method Method, notification chan Notification) {
@@ -89,6 +95,7 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 	defer func() {
 		jsonRPC.conn = nil
 	}()
+	jsonRPC.conn.SetReadLimit(jsonRPC.readLimit)
 
 	if err := jsonRPC.OnConnect(); err != nil {
 		return err
@@ -104,14 +111,14 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 				dialErr = err
 				goto BREAK
 			}
-	
+
 			if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
 				dialErr = err
 				goto BREAK
-			}			
+			}
 		}
 	}
-	BREAK:
+BREAK:
 
 	jsonRPC.OnDisconnect()
 	return dialErr
