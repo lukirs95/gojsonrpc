@@ -2,35 +2,36 @@ package wsjsonrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+)
+
+var (
+	ErrOnDial = errors.New("connection with websocket failed")
 )
 
 type JsonRPC struct {
 	idCounter          RequestId
-	callStackMutex     sync.Mutex
-	callStack          requestResponseMap
+	request            requestResponseMap
 	subscriberRegistry *subscriberRegistry
 	readLimit          int64
 	connMutex          sync.Mutex
 	conn               *websocket.Conn
-	OnConnect          func() error
-	OnDisconnect       func()
 }
 
 func NewJsonRPC() *JsonRPC {
 	return &JsonRPC{
 		idCounter:          RequestId(0),
-		callStackMutex:     sync.Mutex{},
-		callStack:          make(requestResponseMap),
+		request:            requestResponseMap{},
 		subscriberRegistry: newSubscriberRegistry(),
 		readLimit:          2048,
 		connMutex:          sync.Mutex{},
 		conn:               nil,
-		OnConnect:          func() error { return nil },
-		OnDisconnect:       func() {},
 	}
 }
 
@@ -64,10 +65,8 @@ func (jsonRPC *JsonRPC) HandleMessage(message *UnknownMessage) error {
 		}
 		return nil
 	case M_TYPE_RESPONSE:
-		if !jsonRPC.callStack.empty() {
-			jsonRPC.callStackMutex.Lock()
-			responseChannel, err := jsonRPC.callStack.pop(message.Response.Id)
-			jsonRPC.callStackMutex.Unlock()
+		if !jsonRPC.request.empty() {
+			responseChannel, err := jsonRPC.request.pop(message.Response.Id)
 			if err != nil {
 				return err
 			}
@@ -84,41 +83,32 @@ func (jsonRPC *JsonRPC) HandleMessage(message *UnknownMessage) error {
 	return fmt.Errorf("received unsupported message type: %d", message.messageType)
 }
 
-func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
-	c, _, dialErr := websocket.Dial(ctx, address, nil)
-	if dialErr != nil {
-		return dialErr
+func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOptions *websocket.DialOptions) error {
+	withTimeout, cancel := context.WithTimeout(parentCtx, time.Second*10)
+	defer cancel()
+	c, _, err := websocket.Dial(withTimeout, address, wsOptions)
+	if err != nil {
+		return err
 	}
 
 	jsonRPC.conn = c
 	defer func() {
-		jsonRPC.conn = nil
+		c.Close(websocket.StatusNormalClosure, "")
 	}()
 	jsonRPC.conn.SetReadLimit(jsonRPC.readLimit)
 
-	if err := jsonRPC.OnConnect(); err != nil {
-		return err
-	}
-
 	for {
-		select {
-		case <-ctx.Done():
-			goto BREAK
-		default:
-			rpcMessage := &UnknownMessage{}
-			if err := wsjsonread(ctx, c, rpcMessage); err != nil {
-				dialErr = err
-				goto BREAK
-			}
+		rpcMessage := &UnknownMessage{}
 
-			if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
-				dialErr = err
-				goto BREAK
+		if err := wsjson.Read(parentCtx, c, rpcMessage); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
 			}
+			return err
+		}
+
+		if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
+			return err
 		}
 	}
-BREAK:
-
-	jsonRPC.OnDisconnect()
-	return dialErr
 }

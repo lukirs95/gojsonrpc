@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/coder/websocket/wsjson"
 )
 
 func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any) (json.RawMessage, error) {
@@ -26,7 +28,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	}
 	rpc.connMutex.Unlock()
 
-	if err := wsjsonwrite(ctx, rpc.conn, message); err != nil {
+	if err := wsjson.Write(ctx, rpc.conn, message); err != nil {
 		rpc.deleteRequest(message.Id)
 		close(responseChannel)
 		return nil, err
@@ -52,9 +54,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 }
 
 func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel ResponseChan) *RpcRequest {
-	jsonRPC.callStackMutex.Lock()
-	defer jsonRPC.callStackMutex.Unlock()
-	jsonRPC.callStack.push(jsonRPC.nextId(), responseChannel)
+	jsonRPC.request.push(jsonRPC.nextId(), responseChannel)
 	return &RpcRequest{
 		Version: VERSION,
 		Method:  method,
@@ -64,9 +64,7 @@ func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, respon
 }
 
 func (jsonRPC *JsonRPC) deleteRequest(id RequestId) error {
-	jsonRPC.callStackMutex.Lock()
-	defer jsonRPC.callStackMutex.Unlock()
-	responseChannel, err := jsonRPC.callStack.pop(id)
+	responseChannel, err := jsonRPC.request.pop(id)
 	if err != nil {
 		return err
 	}

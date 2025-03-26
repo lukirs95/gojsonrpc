@@ -2,6 +2,7 @@ package wsjsonrpc
 
 import (
 	"errors"
+	"sync"
 )
 
 var (
@@ -9,19 +10,29 @@ var (
 	ErrIdNotFound  = errors.New("request id not found")
 )
 
-type requestResponseMap map[RequestId]ResponseChan
+// requestResponseMap maps a RequestId to a response channel
+type requestResponseMap struct {
+	store map[RequestId]ResponseChan
+	sync.RWMutex
+}
 
-func (m requestResponseMap) push(id RequestId, responseChan ResponseChan) error {
-	if _, ok := m[id]; ok {
+// push adds a new ResponseId to ResponseChannel Mapping and returns ErrDuplicateId
+// if id is already in map
+func (m *requestResponseMap) push(id RequestId, responseChan ResponseChan) error {
+	m.Lock()
+	defer m.Unlock()
+	if _, ok := m.store[id]; ok {
 		return ErrDuplicateId
 	}
-	m[id] = responseChan
+	m.store[id] = responseChan
 	return nil
 }
 
-func (m requestResponseMap) pop(id RequestId) (ResponseChan, error) {
-	if r, ok := m[id]; ok {
-		delete(m, id)
+func (m *requestResponseMap) pop(id RequestId) (ResponseChan, error) {
+	m.Lock()
+	defer m.Unlock()
+	if r, ok := m.store[id]; ok {
+		delete(m.store, id)
 		return r, nil
 	} else {
 		return nil, ErrIdNotFound
@@ -29,6 +40,8 @@ func (m requestResponseMap) pop(id RequestId) (ResponseChan, error) {
 
 }
 
-func (m requestResponseMap) empty() bool {
-	return len(m) == 0
+func (m *requestResponseMap) empty() bool {
+	m.RLock()
+	defer m.RUnlock()
+	return len(m.store) == 0
 }
