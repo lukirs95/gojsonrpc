@@ -1,12 +1,10 @@
-package jsonrpc
+package wsjsonrpc
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/lukirs95/websocket/wsjson"
 )
 
 func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any) (json.RawMessage, error) {
@@ -28,7 +26,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	}
 	rpc.connMutex.Unlock()
 
-	if err := wsjson.Write(ctx, rpc.conn, message); err != nil {
+	if err := wsjsonwrite(ctx, rpc.conn, message); err != nil {
 		rpc.deleteRequest(message.Id)
 		close(responseChannel)
 		return nil, err

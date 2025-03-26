@@ -1,12 +1,11 @@
-package jsonrpc
+package wsjsonrpc
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	"github.com/lukirs95/websocket"
-	"github.com/lukirs95/websocket/wsjson"
+	"github.com/coder/websocket"
 )
 
 type JsonRPC struct {
@@ -107,7 +106,7 @@ func (jsonRPC *JsonRPC) Listen(ctx context.Context, address string) error {
 			goto BREAK
 		default:
 			rpcMessage := &UnknownMessage{}
-			if err := wsjson.Read(ctx, c, rpcMessage); err != nil {
+			if err := wsjsonread(ctx, c, rpcMessage); err != nil {
 				dialErr = err
 				goto BREAK
 			}

@@ -1,4 +1,4 @@
-package jsonrpc
+package wsjsonrpc
 
 import (
 	"encoding/json"
