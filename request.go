@@ -13,8 +13,8 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 		return nil, err
 	}
 
-	responseChannel := make(Response, 1)
-	message := rpc.newRequest(method, params, &responseChannel)
+	responseChannel := make(ResponseChan, 1)
+	message := rpc.newRequest(method, params, responseChannel)
 
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -51,7 +51,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	return nil, fmt.Errorf("request failed, select statement did not work")
 }
 
-func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel *Response) *RpcRequest {
+func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel ResponseChan) *RpcRequest {
 	jsonRPC.callStackMutex.Lock()
 	defer jsonRPC.callStackMutex.Unlock()
 	jsonRPC.callStack.push(jsonRPC.nextId(), responseChannel)
@@ -63,13 +63,13 @@ func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, respon
 	}
 }
 
-func (jsonRPC *JsonRPC) deleteRequest(id Id) error {
+func (jsonRPC *JsonRPC) deleteRequest(id RequestId) error {
 	jsonRPC.callStackMutex.Lock()
 	defer jsonRPC.callStackMutex.Unlock()
 	responseChannel, err := jsonRPC.callStack.pop(id)
 	if err != nil {
 		return err
 	}
-	*responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
+	responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
 	return nil
 }

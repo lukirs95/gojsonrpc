@@ -9,9 +9,9 @@ import (
 )
 
 type JsonRPC struct {
-	idCounter          Id
+	idCounter          RequestId
 	callStackMutex     sync.Mutex
-	callStack          *callStack
+	callStack          requestResponseMap
 	subscriberRegistry *subscriberRegistry
 	readLimit          int64
 	connMutex          sync.Mutex
@@ -22,9 +22,9 @@ type JsonRPC struct {
 
 func NewJsonRPC() *JsonRPC {
 	return &JsonRPC{
-		idCounter:          Id(0),
+		idCounter:          RequestId(0),
 		callStackMutex:     sync.Mutex{},
-		callStack:          newCallStack(),
+		callStack:          make(requestResponseMap),
 		subscriberRegistry: newSubscriberRegistry(),
 		readLimit:          2048,
 		connMutex:          sync.Mutex{},
@@ -46,7 +46,7 @@ func (jsonRPC *JsonRPC) UnsubscribeMethod(method Method) (*Subscriber, error) {
 	return jsonRPC.subscriberRegistry.pop(method)
 }
 
-func (jsonRPC *JsonRPC) nextId() Id {
+func (jsonRPC *JsonRPC) nextId() RequestId {
 	jsonRPC.idCounter++
 	return jsonRPC.idCounter
 }
@@ -72,9 +72,9 @@ func (jsonRPC *JsonRPC) HandleMessage(message *UnknownMessage) error {
 				return err
 			}
 			if message.Response.Result != nil {
-				*responseChannel <- RpcResponse{R_TYPE_RESULT, message.Response.Result, message.Response.Error}
+				responseChannel <- RpcResponse{R_TYPE_RESULT, message.Response.Result, message.Response.Error}
 			} else {
-				*responseChannel <- RpcResponse{R_TYPE_ERROR, message.Response.Result, message.Response.Error}
+				responseChannel <- RpcResponse{R_TYPE_ERROR, message.Response.Result, message.Response.Error}
 			}
 			return nil
 		} else {

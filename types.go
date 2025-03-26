@@ -10,8 +10,8 @@ type (
 	Method       string
 	ErrorCode    int
 	ErrorMessage string
-	Id           int32
-	Response     chan RpcResponse
+	RequestId    int32
+	ResponseChan chan RpcResponse
 	Subscription chan Notification
 	MessageType  int
 	ResponseType int
@@ -20,10 +20,6 @@ type (
 		Code    ErrorCode       `json:"code"`
 		Message ErrorMessage    `json:"message"`
 		Data    json.RawMessage `json:"data,omitempty"`
-	}
-
-	callStack struct {
-		callStack map[Id]*Response
 	}
 
 	subscriberRegistry struct {
@@ -44,7 +40,7 @@ type (
 		Version Version         `json:"jsonrpc"`
 		Method  Method          `json:"method"`
 		Params  json.RawMessage `json:"params"`
-		Id      Id              `json:"id"`
+		Id      RequestId       `json:"id"`
 	}
 
 	RpcNotification struct {
@@ -57,7 +53,7 @@ type (
 		Version Version         `json:"jsonrpc"`
 		Result  json.RawMessage `json:"result"`
 		Error   Error           `json:"error"`
-		Id      Id              `json:"id"`
+		Id      RequestId       `json:"id"`
 	}
 
 	RpcResponse struct {
@@ -70,7 +66,7 @@ type (
 		Version Version          `json:"jsonrpc"`
 		Result  *json.RawMessage `json:"result,omitempty"`
 		Error   *Error           `json:"error,omitempty"`
-		Id      Id               `json:"id"`
+		Id      RequestId        `json:"id"`
 	}
 
 	// This struct is for unmarshalling any jsonrpc message received by the client. It needs to be further processed by HandleMessage method in order to call subscribers or resolve requests.
