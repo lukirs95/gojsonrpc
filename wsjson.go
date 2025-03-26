@@ -1,3 +1,5 @@
+// Lucas Kirsche
+// Copyright (c) 2025 Coder
 // This is a plane copy of github.com/coder/websocket/wsjson
 // with the only difference that on failed json unmarshalling
 // the connection doesn't get closed!
