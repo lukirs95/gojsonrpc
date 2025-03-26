@@ -5,13 +5,6 @@ import (
 	"fmt"
 )
 
-// type UnknownMessage struct {
-// 	messageType  MessageType
-// 	Request      RpcRequest
-// 	Notification RpcNotification
-// 	Response     RpcRawResponse
-// }
-
 type helperMessage struct {
 	Version Version         `json:"jsonrpc"`
 	Id      json.RawMessage `json:"id"`
