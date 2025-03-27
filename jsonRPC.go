@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -22,12 +23,15 @@ type JsonRPC struct {
 	readLimit          int64
 	connMutex          sync.Mutex
 	conn               *websocket.Conn
+	once               atomic.Bool
 }
 
 func NewJsonRPC() *JsonRPC {
 	return &JsonRPC{
-		idCounter:          RequestId(0),
-		request:            requestResponseMap{},
+		idCounter: RequestId(0),
+		request: requestResponseMap{
+			store: make(map[RequestId]ResponseChan),
+		},
 		subscriberRegistry: newSubscriberRegistry(),
 		readLimit:          2048,
 		connMutex:          sync.Mutex{},
@@ -84,6 +88,12 @@ func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 }
 
 func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOptions *websocket.DialOptions) error {
+	if jsonRPC.once.Load() {
+		return fmt.Errorf("already connected")
+	}
+	jsonRPC.once.Store(true)
+	defer jsonRPC.once.Store(false)
+
 	withTimeout, cancel := context.WithTimeout(parentCtx, time.Second*10)
 	defer cancel()
 	c, _, err := websocket.Dial(withTimeout, address, wsOptions)
