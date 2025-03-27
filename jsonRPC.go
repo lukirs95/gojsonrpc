@@ -52,7 +52,7 @@ func (jsonRPC *JsonRPC) nextId() RequestId {
 	return jsonRPC.idCounter
 }
 
-func (jsonRPC *JsonRPC) HandleMessage(message *UnknownMessage) error {
+func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 	switch message.messageType {
 	case M_TYPE_REQUEST:
 		return fmt.Errorf("message type \"request\" currently not supported")
@@ -107,7 +107,7 @@ func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOpt
 			return err
 		}
 
-		if err := jsonRPC.HandleMessage(rpcMessage); err != nil {
+		if err := jsonRPC.handleMessage(rpcMessage); err != nil {
 			return err
 		}
 	}
