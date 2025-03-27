@@ -1,4 +1,4 @@
-package wsjsonrpc
+package gojsonrpc
 
 import (
 	"context"

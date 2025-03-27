@@ -1,4 +1,4 @@
-module github.com/lukirs95/gowsjsonrpc
+module github.com/lukirs95/gojsonrpc
 
 go 1.24.0
 

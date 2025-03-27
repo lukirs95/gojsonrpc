@@ -1,4 +1,4 @@
-package wsjsonrpc
+package gojsonrpc
 
 const VERSION = "2.0"
 
