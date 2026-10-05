@@ -3,6 +3,7 @@ package gojsonrpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 type (
@@ -16,6 +17,9 @@ type (
 	MessageType  int
 	ResponseType int
 
+	// Error is the JSON-RPC 2.0 error object. SendRequest returns it as *Error
+	// when the server answers with an error, so callers can read Code and Data
+	// via errors.As.
 	Error struct {
 		Code    ErrorCode       `json:"code"`
 		Message ErrorMessage    `json:"message"`
@@ -77,3 +81,7 @@ type (
 		Response     RpcRawResponse
 	}
 )
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("response error %d: %s", e.Code, e.Message)
+}

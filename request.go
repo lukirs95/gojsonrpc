@@ -42,7 +42,8 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	case response := <-responseChannel:
 		switch response.ResponseType {
 		case R_TYPE_ERROR:
-			return nil, fmt.Errorf("response error, %s", response.Error.Message)
+			rpcErr := response.Error
+			return nil, &rpcErr
 		case R_TYPE_RESULT:
 			close(responseChannel)
 			return response.Result, nil
