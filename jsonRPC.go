@@ -43,6 +43,9 @@ func (jsonRPC *JsonRPC) SetReadLimit(newLimit int64) {
 	jsonRPC.readLimit = newLimit
 }
 
+// SubscribeMethod delivers notifications for method to the notification channel.
+// Delivery never blocks: a notification is dropped if the channel is not ready
+// to receive or ctx is done. Use a buffered channel to absorb bursts.
 func (jsonRPC *JsonRPC) SubscribeMethod(ctx context.Context, method Method, notification chan Notification) {
 	jsonRPC.subscriberRegistry.push(method, &Subscriber{notification, ctx})
 }
@@ -61,11 +64,15 @@ func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 	case M_TYPE_REQUEST:
 		return fmt.Errorf("message type \"request\" currently not supported")
 	case M_TYPE_NOTIFY:
-		if !jsonRPC.subscriberRegistry.empty() {
-			if subscriber, ok := jsonRPC.subscriberRegistry.subscriber[message.Notification.Method]; ok {
-				subscriber.Notification <- Notification{subscriber.ctx, message.Notification.Params}
-				return nil
-			}
+		subscriber, ok := jsonRPC.subscriberRegistry.subscriber[message.Notification.Method]
+		if !ok || subscriber.ctx.Err() != nil {
+			return nil
+		}
+		// Never block the read loop: if the subscriber is not ready to receive,
+		// the notification is dropped.
+		select {
+		case subscriber.Notification <- Notification{subscriber.ctx, message.Notification.Params}:
+		default:
 		}
 		return nil
 	case M_TYPE_RESPONSE:

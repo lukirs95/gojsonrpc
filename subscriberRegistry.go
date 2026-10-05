@@ -18,11 +18,3 @@ func (subscriberRegistry *subscriberRegistry) pop(method Method) (*Subscriber, e
 		return nil, fmt.Errorf("subscriber for method %s is not in registry", method)
 	}
 }
-
-func (subscriberRegistry *subscriberRegistry) empty() bool {
-	if len(subscriberRegistry.subscriber) == 0 {
-		return true
-	} else {
-		return false
-	}
-}

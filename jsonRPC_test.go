@@ -304,6 +304,28 @@ func TestBlockedSubscriberDoesNotBlockResponses(t *testing.T) {
 	}
 }
 
+func TestNotificationDroppedAfterSubscriberContextDone(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {
+		writeNotification(ctx, conn, "event", nil)
+		writeResult(ctx, conn, req.Id, "ok")
+	})
+	rpc, _ := connectClient(t, addr)
+
+	subCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	notifications := make(chan Notification, 1)
+	rpc.SubscribeMethod(subCtx, "event", notifications)
+
+	if _, err := rpc.SendRequest(context.Background(), "trigger", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case <-notifications:
+		t.Fatal("notification delivered to subscriber with done context")
+	default:
+	}
+}
+
 func TestConnectTwice(t *testing.T) {
 	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {})
 	rpc, _ := connectClient(t, addr)
