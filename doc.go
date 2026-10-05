@@ -8,19 +8,21 @@
 //	go rpc.Connect(ctx, "ws://localhost:8080/jsonrpc", nil)
 //	result, err := rpc.SendRequest(ctx, "sum", []int{1, 2})
 //
-// Until the websocket handshake has completed, SendRequest fails with
-// ErrConnectionClosed. There is no connected signal yet, so retry a first
-// request that fails with ErrConnectionClosed.
+// SendRequest waits for the connection if Connect has not completed the
+// handshake yet, so a request can be sent right after starting Connect. To
+// wait explicitly, call WaitConnected with a deadline.
 //
 // # Requests
 //
 // SendRequest marshals the params to JSON, waits for the response and returns
-// its raw result. It fails with
+// its raw result. Waiting for the connection and for the response together is
+// bounded by the request timeout (SetRequestTimeout, default 2s). It fails with
 //   - *Error if the server answered with a JSON-RPC error (use errors.As to
 //     read Code, Message and Data),
-//   - ErrConnectionClosed if there is no connection or it closed while waiting,
-//   - an error wrapping context.DeadlineExceeded after the request timeout
-//     (SetRequestTimeout, default 2s).
+//   - ErrConnectionClosed if no connection was established in time or it
+//     closed while waiting,
+//   - an error wrapping context.DeadlineExceeded if the server did not answer
+//     in time.
 //
 // A response that arrives after its request timed out is ignored.
 //

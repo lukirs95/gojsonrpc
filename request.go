@@ -6,14 +6,19 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
 
 // SendRequest sends params marshalled to JSON as a request for method and
-// waits for the response. It returns the raw result, an *Error if the server
-// answered with an error, ErrConnectionClosed if there is no connection or it
-// closed, or an error wrapping context.DeadlineExceeded after the request
-// timeout (see SetRequestTimeout).
+// waits for the response. If the client is not connected yet, it first waits
+// for the connection. Both waits together are bounded by the request timeout
+// (see SetRequestTimeout) and ctx.
+//
+// It returns the raw result, an *Error if the server answered with an error,
+// ErrConnectionClosed if no connection was established in time or it closed
+// while waiting, or an error wrapping context.DeadlineExceeded if the server
+// did not answer in time.
 func (c *Client) SendRequest(ctx context.Context, method Method, params any) (json.RawMessage, error) {
 	rawParams, err := json.Marshal(params)
 	if err != nil {
@@ -23,16 +28,20 @@ func (c *Client) SendRequest(ctx context.Context, method Method, params any) (js
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.requestTimeout.Load()))
 	defer cancel()
 
-	// Register before reading conn, so a disconnect in between still fails
-	// this request via popAll.
+	conn, err := c.waitForConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	id := requestID(c.nextID.Add(1))
 	responseChannel := make(chan response, 1)
 	c.pending.push(id, responseChannel)
-
+	// If the connection closed before we registered, popAll has missed this
+	// request. Otherwise a later disconnect fails it via popAll.
 	c.connMutex.Lock()
-	conn := c.conn
+	stillConnected := c.conn == conn
 	c.connMutex.Unlock()
-	if conn == nil {
+	if !stillConnected {
 		c.pending.pop(id)
 		return nil, ErrConnectionClosed
 	}
@@ -49,5 +58,23 @@ func (c *Client) SendRequest(ctx context.Context, method Method, params any) (js
 		return nil, fmt.Errorf("request %s: %w", method, ctx.Err())
 	case res := <-responseChannel:
 		return res.result, res.err
+	}
+}
+
+// waitForConnection returns the current connection, waiting for one until ctx
+// is done.
+func (c *Client) waitForConnection(ctx context.Context) (*websocket.Conn, error) {
+	for {
+		c.connMutex.Lock()
+		conn, connected := c.conn, c.connectedCh
+		c.connMutex.Unlock()
+		if conn != nil {
+			return conn, nil
+		}
+		select {
+		case <-connected:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", ErrConnectionClosed, ctx.Err())
+		}
 	}
 }

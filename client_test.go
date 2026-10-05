@@ -58,19 +58,11 @@ func connectClient(t *testing.T, address string) (*Client, <-chan error) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		rpc.connMutex.Lock()
-		ready := rpc.conn != nil
-		rpc.connMutex.Unlock()
-		if ready {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("client did not connect in time")
-		}
-		time.Sleep(5 * time.Millisecond)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	if err := rpc.WaitConnected(waitCtx); err != nil {
+		cancel()
+		t.Fatalf("client did not connect in time: %v", err)
 	}
 
 	t.Cleanup(func() {
@@ -197,11 +189,85 @@ func TestSendRequestTimeout(t *testing.T) {
 
 func TestSendRequestWithoutConnection(t *testing.T) {
 	rpc := NewClient()
-	if _, err := rpc.SendRequest(context.Background(), "echo", nil); !errors.Is(err, ErrConnectionClosed) {
-		t.Fatalf("got %v, want ErrConnectionClosed", err)
+	rpc.SetRequestTimeout(100 * time.Millisecond)
+
+	start := time.Now()
+	_, err := rpc.SendRequest(context.Background(), "echo", nil)
+	if !errors.Is(err, ErrConnectionClosed) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want ErrConnectionClosed and context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > time.Second {
+		t.Fatalf("waited %v for the connection, want the request timeout", elapsed)
 	}
 	if len(rpc.pending.store) != 0 {
-		t.Fatal("request was not removed from the pending map")
+		t.Fatal("request was left in the pending map")
+	}
+}
+
+func TestSendRequestWaitsForConnection(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req rpcRequest) {
+		writeResult(ctx, conn, req.ID, "ok")
+	})
+	rpc := NewClient()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := rpc.SendRequest(context.Background(), "early", nil)
+		result <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // request is waiting before Connect starts
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- rpc.Connect(ctx, addr, nil) }()
+	defer func() { cancel(); <-done }()
+
+	if err := <-result; err != nil {
+		t.Fatalf("request sent before Connect failed: %v", err)
+	}
+}
+
+// waitConnected calls WaitConnected with a timeout.
+func waitConnected(rpc *Client, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return rpc.WaitConnected(ctx)
+}
+
+func TestWaitConnected(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req rpcRequest) {})
+	rpc := NewClient()
+
+	err := waitConnected(rpc, 50*time.Millisecond)
+	if !errors.Is(err, ErrConnectionClosed) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("before Connect: got %v, want ErrConnectionClosed and context.DeadlineExceeded", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- rpc.Connect(ctx, addr, nil) }()
+	if err := waitConnected(rpc, 2*time.Second); err != nil {
+		t.Fatalf("after Connect: %v", err)
+	}
+
+	cancel()
+	<-done
+	if err := waitConnected(rpc, 50*time.Millisecond); !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("after disconnect: got %v, want ErrConnectionClosed", err)
+	}
+}
+
+// A failed dial must not release waiters; they wait until their ctx is done.
+func TestWaitConnectedAfterDialError(t *testing.T) {
+	rpc := NewClient()
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- waitConnected(rpc, 300*time.Millisecond) }()
+
+	if err := rpc.Connect(context.Background(), "ws://127.0.0.1:1", nil); err == nil {
+		t.Fatal("expected a dial error")
+	}
+	if err := <-waitErr; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want context.DeadlineExceeded", err)
 	}
 }
 
@@ -394,6 +460,7 @@ func TestPendingRequestFailsOnDisconnect(t *testing.T) {
 	if err := <-done; err == nil {
 		t.Fatal("Connect returned nil after the server closed the connection")
 	}
+	rpc.SetRequestTimeout(100 * time.Millisecond)
 	if _, err := rpc.SendRequest(context.Background(), "after", nil); !errors.Is(err, ErrConnectionClosed) {
 		t.Fatalf("request after disconnect: got %v, want ErrConnectionClosed", err)
 	}

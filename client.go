@@ -41,6 +41,7 @@ type Client struct {
 	connected      atomic.Bool
 	connMutex      sync.Mutex
 	conn           *websocket.Conn
+	connectedCh    chan struct{} // closed while conn is set
 }
 
 // NewClient returns a client that is not connected yet, see Connect.
@@ -48,6 +49,7 @@ func NewClient() *Client {
 	c := &Client{
 		pending:     requestResponseMap{store: make(map[requestID]chan response)},
 		subscribers: subscriberRegistry{subscribers: make(map[Method]subscriber)},
+		connectedCh: make(chan struct{}),
 	}
 	c.readLimit.Store(defaultReadLimit)
 	c.requestTimeout.Store(int64(defaultRequestTimeout))
@@ -90,6 +92,16 @@ func (c *Client) Unsubscribe(method Method) error {
 	return nil
 }
 
+// WaitConnected blocks until the client is connected or ctx is done. It
+// returns nil once connected, otherwise an error wrapping both
+// ErrConnectionClosed and ctx.Err(). It never closes on a failed dial, so pass
+// a ctx with a deadline unless you want to wait for the next successful
+// Connect indefinitely.
+func (c *Client) WaitConnected(ctx context.Context) error {
+	_, err := c.waitForConnection(ctx)
+	return err
+}
+
 // Connect dials address and reads messages until ctx is cancelled or the
 // connection fails. It blocks for the lifetime of the connection and returns
 // nil when ctx is cancelled. Pending requests fail with ErrConnectionClosed
@@ -110,10 +122,12 @@ func (c *Client) Connect(ctx context.Context, address string, wsOptions *websock
 	conn.SetReadLimit(c.readLimit.Load())
 	c.connMutex.Lock()
 	c.conn = conn
+	close(c.connectedCh)
 	c.connMutex.Unlock()
 	defer func() {
 		c.connMutex.Lock()
 		c.conn = nil
+		c.connectedCh = make(chan struct{})
 		c.connMutex.Unlock()
 		// Fail pending requests now instead of letting them run into the timeout.
 		for _, responseChannel := range c.pending.popAll() {

@@ -40,9 +40,20 @@ its own goroutine; everything else works while it runs.
   `ErrAlreadyConnected`.
 - To reconnect, call `Connect` again. Subscriptions are kept.
 - When `Connect` returns, every waiting request fails with `ErrConnectionClosed`.
-- Until the handshake has completed, `SendRequest` returns
-  `ErrConnectionClosed`. There is no "connected" signal yet, so retry a first
-  request that fails with this error.
+- You can send requests right after starting `Connect`: `SendRequest` waits
+  for the connection (see [Requests](#requests)).
+- `WaitConnected(ctx)` blocks until the client is connected or `ctx` is done.
+  A failed dial does not end the wait, so give `ctx` a deadline.
+
+```go
+go rpc.Connect(ctx, address, nil)
+
+waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+if err := rpc.WaitConnected(waitCtx); err != nil {
+	return err // wraps ErrConnectionClosed and context.DeadlineExceeded
+}
+```
 
 ```go
 for ctx.Err() == nil {
@@ -57,6 +68,10 @@ for ctx.Err() == nil {
 
 `SendRequest` marshals the params to JSON, sends the request and waits for the
 response. It returns the raw `result`, which you unmarshal yourself.
+
+If the client is not connected yet, `SendRequest` first waits for the
+connection. The request timeout (`SetRequestTimeout`, default 2s) covers both
+waits together, and the context you pass can end them earlier.
 
 ```go
 raw, err := rpc.SendRequest(ctx, "sum", []int{1, 2, 3})
@@ -75,7 +90,7 @@ affect the connection.
 | Error | When |
 |---|---|
 | `*jsonrpc.Error` | The server answered with a JSON-RPC error. Holds `Code`, `Message` and `Data`. |
-| `jsonrpc.ErrConnectionClosed` | Not connected, or the connection closed while waiting. |
+| `jsonrpc.ErrConnectionClosed` | No connection within the request timeout (also wraps `context.DeadlineExceeded`), or the connection closed while waiting. |
 | wraps `context.DeadlineExceeded` | No response within the request timeout. |
 | wraps `context.Canceled` | The context passed to `SendRequest` was cancelled. |
 
@@ -85,7 +100,7 @@ switch {
 case errors.As(err, &rpcErr):
 	log.Printf("server error %d: %s, data: %s", rpcErr.Code, rpcErr.Message, rpcErr.Data)
 case errors.Is(err, jsonrpc.ErrConnectionClosed):
-	// not connected
+	// not connected in time, or connection lost
 case errors.Is(err, context.DeadlineExceeded):
 	// server too slow
 }
@@ -119,7 +134,7 @@ notification that arrives while your loop is busy is lost.
 
 | Method | Default | Applies |
 |---|---|---|
-| `SetRequestTimeout(d)` | 2s | to the next request |
+| `SetRequestTimeout(d)` | 2s | to the next request, including waiting for the connection |
 | `SetDialTimeout(d)` | 10s | on the next `Connect` |
 | `SetReadLimit(bytes)` | 2048 | on the next `Connect` |
 

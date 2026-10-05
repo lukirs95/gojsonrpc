@@ -33,16 +33,8 @@ func Example() {
 		}
 	}()
 
-	// Connect runs in the background; retry until the handshake has completed.
-	var raw json.RawMessage
-	var err error
-	for range 10 {
-		raw, err = rpc.SendRequest(ctx, "sum", []int{1, 2, 3})
-		if !errors.Is(err, jsonrpc.ErrConnectionClosed) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	// SendRequest waits for Connect to complete the handshake.
+	raw, err := rpc.SendRequest(ctx, "sum", []int{1, 2, 3})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -64,7 +56,7 @@ func ExampleClient_SendRequest() {
 	case errors.As(err, &rpcErr):
 		log.Printf("server error %d: %s, data: %s", rpcErr.Code, rpcErr.Message, rpcErr.Data)
 	case errors.Is(err, jsonrpc.ErrConnectionClosed):
-		log.Print("not connected")
+		log.Print("not connected in time")
 	case errors.Is(err, context.DeadlineExceeded):
 		log.Print("server did not answer in time")
 	case err != nil:
