@@ -466,6 +466,20 @@ func TestPendingRequestFailsOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestReadLimitExceeded(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req rpcRequest) {
+		writeResult(ctx, conn, req.ID, strings.Repeat("x", 4096))
+	})
+	rpc, done := connectClient(t, addr) // default read limit is 2048
+
+	if _, err := rpc.SendRequest(context.Background(), "big", nil); !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("got %v, want ErrConnectionClosed", err)
+	}
+	if err := <-done; !errors.Is(err, websocket.ErrMessageTooBig) {
+		t.Fatalf("Connect returned %v, want websocket.ErrMessageTooBig", err)
+	}
+}
+
 func TestConnectTwice(t *testing.T) {
 	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req rpcRequest) {})
 	rpc, _ := connectClient(t, addr)

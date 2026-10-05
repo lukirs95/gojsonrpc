@@ -138,8 +138,10 @@ notification that arrives while your loop is busy is lost.
 | `SetDialTimeout(d)` | 10s | on the next `Connect` |
 | `SetReadLimit(bytes)` | 2048 | on the next `Connect` |
 
-The read limit is small. Messages larger than it close the connection, so raise
-it if your server sends bigger responses or notifications.
+The read limit is small. A message larger than it closes the connection, so
+raise it if your server sends bigger responses or notifications. `Connect` then
+returns an error you can detect with
+`errors.Is(err, websocket.ErrMessageTooBig)` (from `github.com/coder/websocket`).
 
 ## Limitations
 
