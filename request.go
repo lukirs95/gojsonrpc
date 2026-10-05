@@ -30,14 +30,12 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 
 	if err := wsjson.Write(ctx, rpc.conn, message); err != nil {
 		rpc.deleteRequest(message.Id)
-		close(responseChannel)
 		return nil, err
 	}
 
 	select {
 	case <-ctxWithTimeout.Done():
 		rpc.deleteRequest(message.Id)
-		close(responseChannel)
 		return nil, fmt.Errorf("timeout exeeded")
 	case response := <-responseChannel:
 		switch response.ResponseType {
@@ -45,7 +43,6 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 			rpcErr := response.Error
 			return nil, &rpcErr
 		case R_TYPE_RESULT:
-			close(responseChannel)
 			return response.Result, nil
 		case R_TYPE_DELETED:
 			return nil, fmt.Errorf("request was not done, request was deleted")

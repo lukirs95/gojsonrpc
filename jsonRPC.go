@@ -69,20 +69,20 @@ func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 		}
 		return nil
 	case M_TYPE_RESPONSE:
-		if !jsonRPC.request.empty() {
-			responseChannel, err := jsonRPC.request.pop(message.Response.Id)
-			if err != nil {
-				return err
-			}
-			if message.Response.Result != nil {
-				responseChannel <- RpcResponse{R_TYPE_RESULT, message.Response.Result, message.Response.Error}
-			} else {
-				responseChannel <- RpcResponse{R_TYPE_ERROR, message.Response.Result, message.Response.Error}
-			}
+		responseChannel, err := jsonRPC.request.pop(message.Response.Id)
+		if err != nil {
+			// The request already timed out or was never sent by us. Dropping the
+			// response keeps the connection alive.
 			return nil
-		} else {
-			return fmt.Errorf("no request found for response with id %d, callstack is empty", message.Response.Id)
 		}
+		// responseChannel has a buffer of 1 and only the owner of the popped
+		// entry sends on it, so this never blocks.
+		if message.Response.Result != nil {
+			responseChannel <- RpcResponse{R_TYPE_RESULT, message.Response.Result, message.Response.Error}
+		} else {
+			responseChannel <- RpcResponse{R_TYPE_ERROR, message.Response.Result, message.Response.Error}
+		}
+		return nil
 	}
 	return fmt.Errorf("received unsupported message type: %d", message.messageType)
 }

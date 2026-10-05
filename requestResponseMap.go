@@ -39,9 +39,3 @@ func (m *requestResponseMap) pop(id RequestId) (ResponseChan, error) {
 	}
 
 }
-
-func (m *requestResponseMap) empty() bool {
-	m.RLock()
-	defer m.RUnlock()
-	return len(m.store) == 0
-}
