@@ -39,3 +39,15 @@ func (m *requestResponseMap) pop(id RequestId) (ResponseChan, error) {
 	}
 
 }
+
+// popAll removes all pending requests and returns their response channels.
+func (m *requestResponseMap) popAll() []ResponseChan {
+	m.Lock()
+	defer m.Unlock()
+	channels := make([]ResponseChan, 0, len(m.store))
+	for id, responseChan := range m.store {
+		channels = append(channels, responseChan)
+		delete(m.store, id)
+	}
+	return channels
+}

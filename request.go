@@ -18,7 +18,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	responseChannel := make(ResponseChan, 1)
 	message := rpc.newRequest(method, params, responseChannel)
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(rpc.requestTimeout.Load()))
 	defer cancel()
 
 	rpc.connMutex.Lock()
@@ -26,10 +26,10 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	rpc.connMutex.Unlock()
 	if conn == nil {
 		rpc.deleteRequest(message.Id)
-		return nil, fmt.Errorf("request was not done, websocket closed")
+		return nil, ErrConnectionClosed
 	}
 
-	if err := wsjson.Write(ctx, conn, message); err != nil {
+	if err := wsjson.Write(ctxWithTimeout, conn, message); err != nil {
 		rpc.deleteRequest(message.Id)
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 		case R_TYPE_RESULT:
 			return response.Result, nil
 		case R_TYPE_DELETED:
-			return nil, fmt.Errorf("request was not done, request was deleted")
+			return nil, ErrConnectionClosed
 		}
 	}
 	return nil, fmt.Errorf("request failed, select statement did not work")

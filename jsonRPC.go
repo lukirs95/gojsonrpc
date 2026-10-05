@@ -14,32 +14,60 @@ import (
 
 var (
 	ErrOnDial = errors.New("connection with websocket failed")
+	// ErrConnectionClosed is returned by SendRequest when there is no connection
+	// or the connection closed before the response arrived.
+	ErrConnectionClosed = errors.New("request was not done, websocket closed")
+)
+
+const (
+	defaultReadLimit      = 2048
+	defaultRequestTimeout = 2 * time.Second
+	defaultDialTimeout    = 10 * time.Second
 )
 
 type JsonRPC struct {
 	idCounter          atomic.Int32
 	request            requestResponseMap
 	subscriberRegistry *subscriberRegistry
-	readLimit          int64
+	readLimit          atomic.Int64
+	requestTimeout     atomic.Int64 // time.Duration
+	dialTimeout        atomic.Int64 // time.Duration
 	connMutex          sync.Mutex
 	conn               *websocket.Conn
 	once               atomic.Bool
 }
 
 func NewJsonRPC() *JsonRPC {
-	return &JsonRPC{
+	jsonRPC := &JsonRPC{
 		request: requestResponseMap{
 			store: make(map[RequestId]ResponseChan),
 		},
 		subscriberRegistry: newSubscriberRegistry(),
-		readLimit:          2048,
 		connMutex:          sync.Mutex{},
 		conn:               nil,
 	}
+	jsonRPC.readLimit.Store(defaultReadLimit)
+	jsonRPC.requestTimeout.Store(int64(defaultRequestTimeout))
+	jsonRPC.dialTimeout.Store(int64(defaultDialTimeout))
+	return jsonRPC
 }
 
+// SetReadLimit sets the maximum size in bytes of a received message
+// (default 2048). It takes effect on the next Connect.
 func (jsonRPC *JsonRPC) SetReadLimit(newLimit int64) {
-	jsonRPC.readLimit = newLimit
+	jsonRPC.readLimit.Store(newLimit)
+}
+
+// SetRequestTimeout sets how long SendRequest waits for a response
+// (default 2s).
+func (jsonRPC *JsonRPC) SetRequestTimeout(timeout time.Duration) {
+	jsonRPC.requestTimeout.Store(int64(timeout))
+}
+
+// SetDialTimeout sets how long Connect waits for the websocket handshake
+// (default 10s). It takes effect on the next Connect.
+func (jsonRPC *JsonRPC) SetDialTimeout(timeout time.Duration) {
+	jsonRPC.dialTimeout.Store(int64(timeout))
 }
 
 // SubscribeMethod delivers notifications for method to the notification channel.
@@ -98,14 +126,14 @@ func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOpt
 	}
 	defer jsonRPC.once.Store(false)
 
-	withTimeout, cancel := context.WithTimeout(parentCtx, time.Second*10)
+	withTimeout, cancel := context.WithTimeout(parentCtx, time.Duration(jsonRPC.dialTimeout.Load()))
 	defer cancel()
 	c, _, err := websocket.Dial(withTimeout, address, wsOptions)
 	if err != nil {
 		return err
 	}
 
-	c.SetReadLimit(jsonRPC.readLimit)
+	c.SetReadLimit(jsonRPC.readLimit.Load())
 	jsonRPC.connMutex.Lock()
 	jsonRPC.conn = c
 	jsonRPC.connMutex.Unlock()
@@ -113,6 +141,10 @@ func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOpt
 		jsonRPC.connMutex.Lock()
 		jsonRPC.conn = nil
 		jsonRPC.connMutex.Unlock()
+		// Fail pending requests now instead of letting them run into the timeout.
+		for _, responseChannel := range jsonRPC.request.popAll() {
+			responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
+		}
 		c.Close(websocket.StatusNormalClosure, "")
 	}()
 

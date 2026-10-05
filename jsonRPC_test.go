@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -45,13 +46,17 @@ func newTestServer(t *testing.T, handle serverHandler) string {
 }
 
 // connectClient runs Connect in the background and waits until the client is
-// ready to send. The returned channel receives the result of Connect.
+// ready to send. The returned channel receives the result of Connect and is
+// closed afterwards, so it can be read more than once.
 func connectClient(t *testing.T, address string) (*JsonRPC, <-chan error) {
 	t.Helper()
 	rpc := NewJsonRPC()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- rpc.Connect(ctx, address, nil) }()
+	go func() {
+		done <- rpc.Connect(ctx, address, nil)
+		close(done)
+	}()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -169,21 +174,25 @@ func TestSendRequestTimeout(t *testing.T) {
 		// never answer
 	})
 	rpc, _ := connectClient(t, addr)
+	rpc.SetRequestTimeout(100 * time.Millisecond)
 
 	start := time.Now()
 	_, err := rpc.SendRequest(context.Background(), "silent", nil)
 	if err == nil {
 		t.Fatal("expected a timeout error")
 	}
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
+	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("timeout took %v", elapsed)
 	}
 }
 
 func TestSendRequestWithoutConnection(t *testing.T) {
 	rpc := NewJsonRPC()
-	if _, err := rpc.SendRequest(context.Background(), "echo", nil); err == nil {
-		t.Fatal("expected an error without connection")
+	if _, err := rpc.SendRequest(context.Background(), "echo", nil); !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("got %v, want ErrConnectionClosed", err)
+	}
+	if len(rpc.request.store) != 0 {
+		t.Fatal("request was not removed from the pending map")
 	}
 }
 
@@ -193,7 +202,7 @@ func TestLateResponseKeepsConnection(t *testing.T) {
 	answered := make(chan struct{})
 	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {
 		if req.Method == "slow" {
-			time.Sleep(2500 * time.Millisecond) // longer than the client timeout
+			time.Sleep(300 * time.Millisecond) // longer than the client timeout
 			writeResult(ctx, conn, req.Id, "late")
 			close(answered)
 			return
@@ -201,6 +210,7 @@ func TestLateResponseKeepsConnection(t *testing.T) {
 		writeResult(ctx, conn, req.Id, "ok")
 	})
 	rpc, done := connectClient(t, addr)
+	rpc.SetRequestTimeout(100 * time.Millisecond)
 
 	if _, err := rpc.SendRequest(context.Background(), "slow", nil); err == nil {
 		t.Fatal("expected the slow request to time out")
@@ -362,6 +372,29 @@ func TestConcurrentRequestsAndSubscriptions(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPendingRequestFailsOnDisconnect(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {
+		conn.Close(websocket.StatusGoingAway, "bye") // close instead of answering
+	})
+	rpc, done := connectClient(t, addr)
+	rpc.SetRequestTimeout(5 * time.Second)
+
+	start := time.Now()
+	_, err := rpc.SendRequest(context.Background(), "hang", nil)
+	if !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("got %v, want ErrConnectionClosed", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("request waited %v instead of failing on disconnect", elapsed)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("Connect returned nil after the server closed the connection")
+	}
+	if _, err := rpc.SendRequest(context.Background(), "after", nil); !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("request after disconnect: got %v, want ErrConnectionClosed", err)
+	}
+}
+
 func TestConnectTwice(t *testing.T) {
 	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {})
 	rpc, _ := connectClient(t, addr)
@@ -394,6 +427,34 @@ func TestConnectDialError(t *testing.T) {
 	rpc := NewJsonRPC()
 	if err := rpc.Connect(context.Background(), "ws://127.0.0.1:1", nil); err == nil {
 		t.Fatal("expected a dial error")
+	}
+}
+
+func TestConnectDialTimeout(t *testing.T) {
+	// A TCP listener that never answers the websocket handshake.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+
+	rpc := NewJsonRPC()
+	rpc.SetDialTimeout(100 * time.Millisecond)
+	start := time.Now()
+	if err := rpc.Connect(context.Background(), "ws://"+listener.Addr().String(), nil); err == nil {
+		t.Fatal("expected a dial timeout")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("dial took %v", elapsed)
 	}
 }
 
