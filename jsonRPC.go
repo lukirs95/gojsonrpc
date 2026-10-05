@@ -17,7 +17,7 @@ var (
 )
 
 type JsonRPC struct {
-	idCounter          RequestId
+	idCounter          atomic.Int32
 	request            requestResponseMap
 	subscriberRegistry *subscriberRegistry
 	readLimit          int64
@@ -28,7 +28,6 @@ type JsonRPC struct {
 
 func NewJsonRPC() *JsonRPC {
 	return &JsonRPC{
-		idCounter: RequestId(0),
 		request: requestResponseMap{
 			store: make(map[RequestId]ResponseChan),
 		},
@@ -55,8 +54,7 @@ func (jsonRPC *JsonRPC) UnsubscribeMethod(method Method) (*Subscriber, error) {
 }
 
 func (jsonRPC *JsonRPC) nextId() RequestId {
-	jsonRPC.idCounter++
-	return jsonRPC.idCounter
+	return RequestId(jsonRPC.idCounter.Add(1))
 }
 
 func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
@@ -64,7 +62,7 @@ func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 	case M_TYPE_REQUEST:
 		return fmt.Errorf("message type \"request\" currently not supported")
 	case M_TYPE_NOTIFY:
-		subscriber, ok := jsonRPC.subscriberRegistry.subscriber[message.Notification.Method]
+		subscriber, ok := jsonRPC.subscriberRegistry.get(message.Notification.Method)
 		if !ok || subscriber.ctx.Err() != nil {
 			return nil
 		}
@@ -95,10 +93,9 @@ func (jsonRPC *JsonRPC) handleMessage(message *UnknownMessage) error {
 }
 
 func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOptions *websocket.DialOptions) error {
-	if jsonRPC.once.Load() {
+	if !jsonRPC.once.CompareAndSwap(false, true) {
 		return fmt.Errorf("already connected")
 	}
-	jsonRPC.once.Store(true)
 	defer jsonRPC.once.Store(false)
 
 	withTimeout, cancel := context.WithTimeout(parentCtx, time.Second*10)
@@ -108,11 +105,16 @@ func (jsonRPC *JsonRPC) Connect(parentCtx context.Context, address string, wsOpt
 		return err
 	}
 
+	c.SetReadLimit(jsonRPC.readLimit)
+	jsonRPC.connMutex.Lock()
 	jsonRPC.conn = c
+	jsonRPC.connMutex.Unlock()
 	defer func() {
+		jsonRPC.connMutex.Lock()
+		jsonRPC.conn = nil
+		jsonRPC.connMutex.Unlock()
 		c.Close(websocket.StatusNormalClosure, "")
 	}()
-	jsonRPC.conn.SetReadLimit(jsonRPC.readLimit)
 
 	for {
 		rpcMessage := &UnknownMessage{}

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -324,6 +326,40 @@ func TestNotificationDroppedAfterSubscriberContextDone(t *testing.T) {
 		t.Fatal("notification delivered to subscriber with done context")
 	default:
 	}
+}
+
+// Run with -race: requests, subscriptions and notifications run concurrently.
+func TestConcurrentRequestsAndSubscriptions(t *testing.T) {
+	addr := newTestServer(t, func(ctx context.Context, conn *websocket.Conn, req RpcRequest) {
+		writeNotification(ctx, conn, "event", nil)
+		writeResult(ctx, conn, req.Id, req.Params) // echo
+	})
+	rpc, _ := connectClient(t, addr)
+
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := rpc.SendRequest(context.Background(), "echo", i)
+			if err != nil {
+				t.Errorf("request %d: %v", i, err)
+				return
+			}
+			if string(result) != strconv.Itoa(i) {
+				t.Errorf("request %d got result %s", i, result)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 50 {
+			rpc.SubscribeMethod(context.Background(), "event", make(chan Notification, 1))
+			rpc.UnsubscribeMethod("event")
+		}
+	}()
+	wg.Wait()
 }
 
 func TestConnectTwice(t *testing.T) {

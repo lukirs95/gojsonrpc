@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 type (
@@ -28,6 +29,7 @@ type (
 
 	subscriberRegistry struct {
 		subscriber map[Method]*Subscriber
+		sync.RWMutex
 	}
 
 	Subscriber struct {

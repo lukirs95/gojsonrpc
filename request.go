@@ -22,13 +22,14 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 	defer cancel()
 
 	rpc.connMutex.Lock()
-	if rpc.conn == nil {
-		rpc.connMutex.Unlock()
+	conn := rpc.conn
+	rpc.connMutex.Unlock()
+	if conn == nil {
+		rpc.deleteRequest(message.Id)
 		return nil, fmt.Errorf("request was not done, websocket closed")
 	}
-	rpc.connMutex.Unlock()
 
-	if err := wsjson.Write(ctx, rpc.conn, message); err != nil {
+	if err := wsjson.Write(ctx, conn, message); err != nil {
 		rpc.deleteRequest(message.Id)
 		return nil, err
 	}
@@ -52,12 +53,13 @@ func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any)
 }
 
 func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel ResponseChan) *RpcRequest {
-	jsonRPC.request.push(jsonRPC.nextId(), responseChannel)
+	id := jsonRPC.nextId()
+	jsonRPC.request.push(id, responseChannel)
 	return &RpcRequest{
 		Version: VERSION,
 		Method:  method,
 		Params:  params,
-		Id:      jsonRPC.idCounter,
+		Id:      id,
 	}
 }
 
