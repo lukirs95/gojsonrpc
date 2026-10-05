@@ -1,31 +1,38 @@
 package gojsonrpc
 
-import "fmt"
+import (
+	"context"
+	"sync"
+)
 
-func newSubscriberRegistry() *subscriberRegistry {
-	return &subscriberRegistry{subscriber: make(map[Method]*Subscriber)}
+type subscriber struct {
+	notifications chan<- Notification
+	ctx           context.Context
 }
 
-func (subscriberRegistry *subscriberRegistry) push(method Method, subscriber *Subscriber) {
-	subscriberRegistry.Lock()
-	defer subscriberRegistry.Unlock()
-	subscriberRegistry.subscriber[method] = subscriber
+// subscriberRegistry maps a method to the subscriber of its notifications.
+type subscriberRegistry struct {
+	subscribers map[Method]subscriber
+	sync.RWMutex
 }
 
-func (subscriberRegistry *subscriberRegistry) get(method Method) (*Subscriber, bool) {
-	subscriberRegistry.RLock()
-	defer subscriberRegistry.RUnlock()
-	subscriber, ok := subscriberRegistry.subscriber[method]
-	return subscriber, ok
+func (r *subscriberRegistry) push(method Method, s subscriber) {
+	r.Lock()
+	defer r.Unlock()
+	r.subscribers[method] = s
 }
 
-func (subscriberRegistry *subscriberRegistry) pop(method Method) (*Subscriber, error) {
-	subscriberRegistry.Lock()
-	defer subscriberRegistry.Unlock()
-	if channel, ok := subscriberRegistry.subscriber[method]; ok {
-		delete(subscriberRegistry.subscriber, method)
-		return channel, nil
-	} else {
-		return nil, fmt.Errorf("subscriber for method %s is not in registry", method)
-	}
+func (r *subscriberRegistry) get(method Method) (subscriber, bool) {
+	r.RLock()
+	defer r.RUnlock()
+	s, ok := r.subscribers[method]
+	return s, ok
+}
+
+func (r *subscriberRegistry) pop(method Method) bool {
+	r.Lock()
+	defer r.Unlock()
+	_, ok := r.subscribers[method]
+	delete(r.subscribers, method)
+	return ok
 }

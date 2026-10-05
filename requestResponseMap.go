@@ -1,50 +1,35 @@
 package gojsonrpc
 
-import (
-	"errors"
-	"sync"
-)
+import "sync"
 
-var (
-	ErrDuplicateId = errors.New("request id already in map")
-	ErrIdNotFound  = errors.New("request id not found")
-)
-
-// requestResponseMap maps a RequestId to a response channel
+// requestResponseMap maps the id of a pending request to the channel its
+// response is sent on.
 type requestResponseMap struct {
-	store map[RequestId]ResponseChan
-	sync.RWMutex
+	store map[requestID]chan response
+	sync.Mutex
 }
 
-// push adds a new ResponseId to ResponseChannel Mapping and returns ErrDuplicateId
-// if id is already in map
-func (m *requestResponseMap) push(id RequestId, responseChan ResponseChan) error {
+func (m *requestResponseMap) push(id requestID, responseChan chan response) {
 	m.Lock()
 	defer m.Unlock()
-	if _, ok := m.store[id]; ok {
-		return ErrDuplicateId
-	}
 	m.store[id] = responseChan
-	return nil
 }
 
-func (m *requestResponseMap) pop(id RequestId) (ResponseChan, error) {
+// pop removes the request and returns its channel. Only the caller that pops
+// an entry sends on the channel.
+func (m *requestResponseMap) pop(id requestID) (chan response, bool) {
 	m.Lock()
 	defer m.Unlock()
-	if r, ok := m.store[id]; ok {
-		delete(m.store, id)
-		return r, nil
-	} else {
-		return nil, ErrIdNotFound
-	}
-
+	responseChan, ok := m.store[id]
+	delete(m.store, id)
+	return responseChan, ok
 }
 
 // popAll removes all pending requests and returns their response channels.
-func (m *requestResponseMap) popAll() []ResponseChan {
+func (m *requestResponseMap) popAll() []chan response {
 	m.Lock()
 	defer m.Unlock()
-	channels := make([]ResponseChan, 0, len(m.store))
+	channels := make([]chan response, 0, len(m.store))
 	for id, responseChan := range m.store {
 		channels = append(channels, responseChan)
 		delete(m.store, id)

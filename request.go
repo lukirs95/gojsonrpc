@@ -9,65 +9,45 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-func (rpc *JsonRPC) SendRequest(ctx context.Context, method Method, request any) (json.RawMessage, error) {
-	params, err := json.Marshal(request)
+// SendRequest sends params marshalled to JSON as a request for method and
+// waits for the response. It returns the raw result, an *Error if the server
+// answered with an error, ErrConnectionClosed if there is no connection or it
+// closed, or an error wrapping context.DeadlineExceeded after the request
+// timeout (see SetRequestTimeout).
+func (c *Client) SendRequest(ctx context.Context, method Method, params any) (json.RawMessage, error) {
+	rawParams, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
 
-	responseChannel := make(ResponseChan, 1)
-	message := rpc.newRequest(method, params, responseChannel)
-
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(rpc.requestTimeout.Load()))
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.requestTimeout.Load()))
 	defer cancel()
 
-	rpc.connMutex.Lock()
-	conn := rpc.conn
-	rpc.connMutex.Unlock()
+	// Register before reading conn, so a disconnect in between still fails
+	// this request via popAll.
+	id := requestID(c.nextID.Add(1))
+	responseChannel := make(chan response, 1)
+	c.pending.push(id, responseChannel)
+
+	c.connMutex.Lock()
+	conn := c.conn
+	c.connMutex.Unlock()
 	if conn == nil {
-		rpc.deleteRequest(message.Id)
+		c.pending.pop(id)
 		return nil, ErrConnectionClosed
 	}
 
-	if err := wsjson.Write(ctxWithTimeout, conn, message); err != nil {
-		rpc.deleteRequest(message.Id)
+	request := rpcRequest{Version: jsonrpcVersion, Method: method, Params: rawParams, ID: id}
+	if err := wsjson.Write(ctx, conn, request); err != nil {
+		c.pending.pop(id)
 		return nil, err
 	}
 
 	select {
-	case <-ctxWithTimeout.Done():
-		rpc.deleteRequest(message.Id)
-		return nil, fmt.Errorf("timeout exeeded")
-	case response := <-responseChannel:
-		switch response.ResponseType {
-		case R_TYPE_ERROR:
-			rpcErr := response.Error
-			return nil, &rpcErr
-		case R_TYPE_RESULT:
-			return response.Result, nil
-		case R_TYPE_DELETED:
-			return nil, ErrConnectionClosed
-		}
+	case <-ctx.Done():
+		c.pending.pop(id)
+		return nil, fmt.Errorf("request %s: %w", method, ctx.Err())
+	case res := <-responseChannel:
+		return res.result, res.err
 	}
-	return nil, fmt.Errorf("request failed, select statement did not work")
-}
-
-func (jsonRPC *JsonRPC) newRequest(method Method, params json.RawMessage, responseChannel ResponseChan) *RpcRequest {
-	id := jsonRPC.nextId()
-	jsonRPC.request.push(id, responseChannel)
-	return &RpcRequest{
-		Version: VERSION,
-		Method:  method,
-		Params:  params,
-		Id:      id,
-	}
-}
-
-func (jsonRPC *JsonRPC) deleteRequest(id RequestId) error {
-	responseChannel, err := jsonRPC.request.pop(id)
-	if err != nil {
-		return err
-	}
-	responseChannel <- RpcResponse{R_TYPE_DELETED, nil, Error{}}
-	return nil
 }
